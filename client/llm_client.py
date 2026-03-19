@@ -1,22 +1,44 @@
 from openai import AsyncOpenAI,RateLimitError,APIConnectionError,APIError
 from typing import Any,AsyncGenerator
-from .response import TextDelta,TokenUsage,StreamEvent,EventType
+from .response import TextDelta,TokenUsage,StreamEvent,StreamEventType
 import asyncio
+from pathlib import Path
+from dotenv import load_dotenv
+import os
 
 
+# Go up two levels from client/llm_client.py → reaches project root
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# print(PROJECT_ROOT)
+# Full path to .env
+env_path = PROJECT_ROOT / ".env"
+
+# Load it (silently if missing — or you can make it strict)
+load_dotenv(env_path)
+
+# Now read your keys safely
+API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+if not API_KEY:
+    raise ValueError(
+        "OPENROUTER_API_KEY not found.\n"
+        "→ Create .env file in project root with:\n"
+        "OPENROUTER_API_KEY=sk-or-v1-..."
+    )
 class LLMClient:
 
     def __init__(self)->None:
         #initially client is none
         self._client:AsyncOpenAI|None=None
         self._max_retries:int=3
+        self.api_key=API_KEY
     
 
     def get_client(self)->AsyncOpenAI:
         #if client is None object create new client
         if self._client is None:
             self._client=AsyncOpenAI(
-                api_key='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',
+                api_key=self.api_key,
                 base_url="https://openrouter.ai/api/v1",
             ) 
         #else, return current client
@@ -29,7 +51,7 @@ class LLMClient:
             self._client=None
     
 
-    async def chat_completion(self,messages:list[dict[str,Any]],stream:bool=True)->AsyncGenerator[StreamEvent,None]:
+    async def chat_completion(self,messages:list[dict[str,Any]],stream:bool=False)->AsyncGenerator[StreamEvent,None]:
         """
         messages: list of messages between user and llm ,dict is to mention whether it is user or llm
         (messages needs to be stored because llm'are stateless)
@@ -62,7 +84,7 @@ class LLMClient:
                     await asyncio.sleep(wait_time)
                 else:
                     yield StreamEvent(
-                        type=EventType.ERROR,
+                        type=StreamEventType.ERROR,
                         error=f'Rate limit exceeded : {e}'
                     )
                     return
@@ -73,16 +95,21 @@ class LLMClient:
                     await asyncio.sleep(wait_time)
                 else:
                     yield StreamEvent(
-                        type=EventType.ERROR,
+                        type=StreamEventType.ERROR,
                         error=f'Connection error: {e}'
                     )
                     return
             except APIError as e:
                     yield StreamEvent(
-                        type=EventType.ERROR,
+                        type=StreamEventType.ERROR,
                         error=f'API error: {e}'
                     )
                     return 
+            except Exception as e:   # ← catch-all
+                    yield StreamEvent(
+                        type=StreamEventType.ERROR,
+                        error=f"Unexpected exception in chat_completion: {type(e).__name__}: {str(e)}"
+                    )
 
     
     #method for stream response
@@ -92,11 +119,14 @@ class LLMClient:
     )->AsyncGenerator[StreamEvent,None]:
         response=await client.chat.completions.create(**kwargs)
 
+        # print("STREAM CALLED")
+
         usage:TokenUsage|None=None
         finish_reason:str|None=None
         async for chunk in response:
             #getting token usage if available in each streaming chunk
             if hasattr(chunk,"usage") and chunk.usage:
+                # print("CHUNK:", chunk)
                 usage = TokenUsage(
                     prompt_tokens=chunk.usage.prompt_tokens,
                     completion_tokens=chunk.usage.completion_tokens,
@@ -121,13 +151,13 @@ class LLMClient:
             if delta.content:
                 #yield response for current chunk
                 yield StreamEvent(
-                    type=EventType.TEXT_DELTA,
+                    type=StreamEventType.TEXT_DELTA,
                     text_delta=TextDelta(delta.content)
                 )
         
         #yield response after all the chunks processed with message complete type and finish reason
         yield StreamEvent(
-            type=EventType.MESSAGE_COMPLETE,
+            type=StreamEventType.MESSAGE_COMPLETE,
             finish_reason=finish_reason,
             usage=usage
         )
@@ -135,6 +165,7 @@ class LLMClient:
     #method for non-stream output
     async def _non_stream_response(self,client:AsyncOpenAI,kwargs:dict[str,Any])->StreamEvent:
         response=await client.chat.completions.create(**kwargs)
+        # print("NON STREAM CALLED")
         choice=response.choices[0]
         message=choice.message
 
@@ -153,7 +184,7 @@ class LLMClient:
             )
         
         return StreamEvent(
-            type=EventType.MESSAGE_COMPLETE,
+            type=StreamEventType.MESSAGE_COMPLETE,
             text_delta=text_delta,
             finish_reason=choice.finish_reason,
             usage=usage
