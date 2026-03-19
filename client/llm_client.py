@@ -2,21 +2,43 @@ from openai import AsyncOpenAI,RateLimitError,APIConnectionError,APIError
 from typing import Any,AsyncGenerator
 from .response import TextDelta,TokenUsage,StreamEvent,StreamEventType
 import asyncio
+from pathlib import Path
+from dotenv import load_dotenv
+import os
 
 
+# Go up two levels from client/llm_client.py → reaches project root
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# print(PROJECT_ROOT)
+# Full path to .env
+env_path = PROJECT_ROOT / ".env"
+
+# Load it (silently if missing — or you can make it strict)
+load_dotenv(env_path)
+
+# Now read your keys safely
+API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+if not API_KEY:
+    raise ValueError(
+        "OPENROUTER_API_KEY not found.\n"
+        "→ Create .env file in project root with:\n"
+        "OPENROUTER_API_KEY=sk-or-v1-..."
+    )
 class LLMClient:
 
     def __init__(self)->None:
         #initially client is none
         self._client:AsyncOpenAI|None=None
         self._max_retries:int=3
+        self.api_key=API_KEY
     
 
     def get_client(self)->AsyncOpenAI:
         #if client is None object create new client
         if self._client is None:
             self._client=AsyncOpenAI(
-                api_key='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',
+                api_key=self.api_key,
                 base_url="https://openrouter.ai/api/v1",
             ) 
         #else, return current client
