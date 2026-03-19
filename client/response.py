@@ -10,8 +10,8 @@ class TextDelta:
     def __str__(self):
         return self.content
 
-@dataclass
-class EventType(str,Enum):#mentioning types of output from LLM
+
+class StreamEventType(str,Enum):#mentioning types of output from LLM
     TEXT_DELTA="text_delta" #mentioning partial output streamed from LLM
     MESSAGE_COMPLETE="message_complete"#output complete message from LLM
     ERROR="error"
@@ -34,7 +34,7 @@ class TokenUsage:
 
 @dataclass
 class StreamEvent:
-    type:EventType
+    type:StreamEventType
     text_delta:TextDelta|None=None #can have none because output may be tool calling
     error: str|None=None
     finish_reason: str|None=None
